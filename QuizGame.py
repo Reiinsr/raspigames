@@ -13,7 +13,7 @@ from pymodbus.client.sync import ModbusSerialClient as ModbusClient
 # ---- Modbus setup ----
 client = ModbusClient(
     method="rtu",
-    port="/dev/ttyUSB0",
+    port="/dev/ttyUSB0",  # adjust if needed
     baudrate=9600,
     parity="N",
     stopbits=1,
@@ -143,6 +143,11 @@ class QuizApp(QMainWindow):
         save_btn = QPushButton("Save Questions")
         save_btn.clicked.connect(self.save_questions)
         layout.addWidget(save_btn)
+
+        back_btn = QPushButton("Back to Menu")
+        back_btn.clicked.connect(lambda: self.stack.setCurrentWidget(self.main_menu))
+        layout.addWidget(back_btn)
+
         page.setLayout(layout)
         return page
 
@@ -166,27 +171,30 @@ class QuizApp(QMainWindow):
         self.question_label = QLabel("", self)
         self.question_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.question_label.setWordWrap(True)
+        self.question_label.setStyleSheet("font-size:28px;")  # LARGE FONT
         layout.addWidget(self.question_label)
+
         self.answer_buttons = []
         answer_layout = QVBoxLayout()
         for i in range(4):
             btn = QPushButton("")
-            btn.setFixedHeight(50)
+            btn.setFixedHeight(70)
+            btn.setStyleSheet("font-size:24px;")  # LARGE FONT
             btn.clicked.connect(lambda checked, b=i: self.check_answer(b))
             self.answer_buttons.append(btn)
             answer_layout.addWidget(btn)
         layout.addLayout(answer_layout)
 
         self.player_labels = []
-        self.player_score_labels = []
         player_layout = QHBoxLayout()
         for i in range(num_players):
             lbl = QLabel(f"P{i+1}: 0")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(f"font-size:16px; padding:20px; border:1px solid black; background-color:{player_colors[i]}; color:white;")
+            lbl.setStyleSheet(f"font-size:20px; padding:20px; border:1px solid black; background-color:{player_colors[i]}; color:white;")
             self.player_labels.append(lbl)
             player_layout.addWidget(lbl)
         layout.addLayout(player_layout)
+
         page.setLayout(layout)
         return page
 
@@ -203,7 +211,7 @@ class QuizApp(QMainWindow):
             btn.setEnabled(False)
         active_players = [True]*num_players
         for i, lbl in enumerate(self.player_labels):
-            lbl.setStyleSheet(f"font-size:16px; padding:20px; border:1px solid black; background-color:{player_colors[i]}; color:white; text-align:center;")
+            lbl.setStyleSheet(f"font-size:20px; padding:20px; border:1px solid black; background-color:{player_colors[i]}; color:white;")
             lbl.setText(f"P{i+1}: {scores[i]}")
 
     def update_game(self):
@@ -212,8 +220,8 @@ class QuizApp(QMainWindow):
             for i, btn in enumerate(self.answer_buttons):
                 btn.setEnabled(True)
             # highlight winner
-            self.player_labels[winner].setStyleSheet(f"font-size:16px; padding:20px; border:2px solid black; background-color:{winner_colors[winner]}; color:black;")
-
+            self.player_labels[winner].setStyleSheet(f"font-size:20px; padding:20px; border:2px solid black; background-color:{winner_colors[winner]}; color:black;")
+            
     def check_answer(self, answer_idx):
         global winner, current_question_index, scores, active_players
         if winner is None:
@@ -233,7 +241,7 @@ class QuizApp(QMainWindow):
             self.load_question()
         else:
             active_players[player_idx] = False
-            self.player_labels[player_idx].setStyleSheet(f"font-size:16px; padding:20px; border:1px solid black; background-color:{grey_color}; color:white;")
+            self.player_labels[player_idx].setStyleSheet(f"font-size:20px; padding:20px; border:1px solid black; background-color:{grey_color}; color:white;")
             winner = None
 
     def keyPressEvent(self, event):
@@ -251,4 +259,3 @@ if __name__ == "__main__":
     sys.exit(app.exec())
     running = False
     client.close()
-
