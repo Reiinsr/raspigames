@@ -13,7 +13,7 @@ from pymodbus.client.sync import ModbusSerialClient as ModbusClient
 # ---- Modbus setup ----
 client = ModbusClient(
     method="rtu",
-    port="/dev/ttyUSB0",  # change if needed
+    port="/dev/ttyUSB0",
     baudrate=9600,
     parity="N",
     stopbits=1,
@@ -45,7 +45,6 @@ try:
     with open(QUESTION_FILE, "r") as f:
         questions = json.load(f)
 except:
-    # default empty questions
     questions = [{"question": f"Question {i+1}", "answers": ["A","B","C","D"], "correct":0} for i in range(13)]
     with open(QUESTION_FILE, "w") as f:
         json.dump(questions, f, indent=4)
@@ -59,7 +58,7 @@ def poll_modbus():
             if not rr.isError():
                 inputs = rr.bits
                 for i, pressed in enumerate(inputs):
-                    if pressed and winner is None:
+                    if pressed and winner is None and active_players[i]:
                         winner = i
                         break
         time.sleep(0.1)
@@ -71,7 +70,6 @@ class QuizApp(QMainWindow):
         self.setWindowTitle("Quiz Game")
         self.resize(900, 600)
         self.stack = QStackedLayout()
-
         container = QWidget()
         container.setLayout(self.stack)
         self.setCentralWidget(container)
@@ -84,7 +82,6 @@ class QuizApp(QMainWindow):
         self.stack.addWidget(self.editor_page)
         self.stack.addWidget(self.game_page)
 
-        # Timer for GUI updates
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_game)
         self.timer.start(100)
@@ -94,35 +91,33 @@ class QuizApp(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
         start_btn = QPushButton("Start")
         start_btn.setFixedSize(200, 80)
         start_btn.clicked.connect(self.start_game)
-
         edit_btn = QPushButton("Edit Questions")
         edit_btn.setFixedSize(200, 80)
         edit_btn.clicked.connect(lambda: self.stack.setCurrentWidget(self.editor_page))
-
         layout.addWidget(start_btn)
         layout.addWidget(edit_btn)
         page.setLayout(layout)
         return page
 
-    # ---- Question Editor Page ----
+    # ---- Question Editor ----
     def create_editor_page(self):
         page = QWidget()
         layout = QVBoxLayout()
-
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout()
-
         self.edit_fields = []
+
         for idx, q in enumerate(questions):
             q_layout = QVBoxLayout()
-            q_label = QLabel(f"Question {idx+1}")
             q_text = QLineEdit(q["question"])
+            q_text.setPlaceholderText("Type the question here")
+            q_layout.addWidget(QLabel(f"Question {idx+1}:"))
+            q_layout.addWidget(q_text)
             answer_fields = []
             correct_group = QButtonGroup()
             for i in range(4):
@@ -131,6 +126,7 @@ class QuizApp(QMainWindow):
                 if i == q["correct"]:
                     radio.setChecked(True)
                 txt = QLineEdit(q["answers"][i])
+                txt.setPlaceholderText(f"Answer {i+1}")
                 ans_layout.addWidget(radio)
                 ans_layout.addWidget(txt)
                 q_layout.addLayout(ans_layout)
@@ -139,6 +135,7 @@ class QuizApp(QMainWindow):
             self.edit_fields.append((q_text, answer_fields))
             scroll_layout.addLayout(q_layout)
             scroll_layout.addWidget(QLabel("--------"))
+
         scroll_content.setLayout(scroll_layout)
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll)
@@ -146,11 +143,9 @@ class QuizApp(QMainWindow):
         save_btn = QPushButton("Save Questions")
         save_btn.clicked.connect(self.save_questions)
         layout.addWidget(save_btn)
-
         page.setLayout(layout)
         return page
 
-    # ---- Save Questions ----
     def save_questions(self):
         global questions
         for idx, (q_text, ans_fields) in enumerate(self.edit_fields):
@@ -167,9 +162,11 @@ class QuizApp(QMainWindow):
     # ---- Game Page ----
     def create_game_page(self):
         page = QWidget()
+        layout = QVBoxLayout()
         self.question_label = QLabel("", self)
         self.question_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.question_label.setWordWrap(True)
+        layout.addWidget(self.question_label)
         self.answer_buttons = []
         answer_layout = QVBoxLayout()
         for i in range(4):
@@ -178,20 +175,17 @@ class QuizApp(QMainWindow):
             btn.clicked.connect(lambda checked, b=i: self.check_answer(b))
             self.answer_buttons.append(btn)
             answer_layout.addWidget(btn)
+        layout.addLayout(answer_layout)
 
-        # Player panels
         self.player_labels = []
+        self.player_score_labels = []
         player_layout = QHBoxLayout()
         for i in range(num_players):
-            lbl = QLabel(f"Player {i+1}")
+            lbl = QLabel(f"P{i+1}: 0")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(f"font-size:18px; padding:20px; border:1px solid black; background-color:{player_colors[i]}; color:white;")
+            lbl.setStyleSheet(f"font-size:16px; padding:20px; border:1px solid black; background-color:{player_colors[i]}; color:white;")
             self.player_labels.append(lbl)
             player_layout.addWidget(lbl)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.question_label)
-        layout.addLayout(answer_layout)
         layout.addLayout(player_layout)
         page.setLayout(layout)
         return page
@@ -209,27 +203,28 @@ class QuizApp(QMainWindow):
             btn.setEnabled(False)
         active_players = [True]*num_players
         for i, lbl in enumerate(self.player_labels):
-            lbl.setStyleSheet(f"font-size:18px; padding:20px; border:1px solid black; background-color:{player_colors[i]}; color:white;")
+            lbl.setStyleSheet(f"font-size:16px; padding:20px; border:1px solid black; background-color:{player_colors[i]}; color:white; text-align:center;")
+            lbl.setText(f"P{i+1}: {scores[i]}")
 
     def update_game(self):
         global winner
         if winner is not None:
-            # enable answer buttons for the winner only
             for i, btn in enumerate(self.answer_buttons):
                 btn.setEnabled(True)
+            # highlight winner
+            self.player_labels[winner].setStyleSheet(f"font-size:16px; padding:20px; border:2px solid black; background-color:{winner_colors[winner]}; color:black;")
 
     def check_answer(self, answer_idx):
         global winner, current_question_index, scores, active_players
-        q = questions[current_question_index]
         if winner is None:
             return
         player_idx = winner
+        q = questions[current_question_index]
         if answer_idx == q["correct"]:
-            # correct answer
             if sum(active_players) == num_players:
-                scores[player_idx] += 100  # first correct
+                scores[player_idx] += 100
             else:
-                scores[player_idx] += 50  # after first lost
+                scores[player_idx] += 50
             current_question_index += 1
             winner = None
             if current_question_index >= len(questions):
@@ -237,13 +232,11 @@ class QuizApp(QMainWindow):
                 current_question_index = 0
             self.load_question()
         else:
-            # wrong answer, grey out player
             active_players[player_idx] = False
-            self.player_labels[player_idx].setStyleSheet(f"font-size:18px; padding:20px; border:1px solid black; background-color:{grey_color}; color:white;")
+            self.player_labels[player_idx].setStyleSheet(f"font-size:16px; padding:20px; border:1px solid black; background-color:{grey_color}; color:white;")
             winner = None
 
     def keyPressEvent(self, event):
-        """Reset round with Enter if needed"""
         global winner
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
             winner = None
@@ -258,3 +251,4 @@ if __name__ == "__main__":
     sys.exit(app.exec())
     running = False
     client.close()
+
