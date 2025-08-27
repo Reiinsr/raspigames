@@ -237,6 +237,7 @@ class GamePage(QWidget):
 
         # Winner overlay + blink timer placeholders
         self.overlay = None
+        self.winner_label = None
         self.blink_timer = None
         self.blink_state = False
         self.final_winner_indices = []
@@ -282,23 +283,22 @@ class GamePage(QWidget):
 
         # Reset player colors
         for i,lbl in enumerate(self.player_labels):
-            lbl.setStyleSheet(f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
-            lbl.setEnabled(True)
+            color = self.dark_colors[i] if self.active_players[i] else self.grey
+            lbl.setStyleSheet(f"background-color:{color}; color:white; font-size:20px; padding:14px; border-radius:6px;")
 
-        # Hide GAME OVER overlay if exists
+        # Hide overlay if exists
         if self.overlay:
             self.overlay.hide()
-            self.overlay = None
+        if self.winner_label:
+            self.winner_label.hide()
         if self.blink_timer:
             self.blink_timer.stop()
 
     def poll_buzzers(self):
-        if self.manual_winner_mode:
-            return
-        if not self.client:
+        if self.manual_winner_mode or not self.client:
             return
         try:
-            rr = self.client.read_discrete_inputs(10, 4, unit=1)  # X0-X3
+            rr = self.client.read_discrete_inputs(10, 4, unit=1)
             if rr.isError():
                 return
             for i, pressed in enumerate(rr.bits):
@@ -314,10 +314,9 @@ class GamePage(QWidget):
     def player_answer(self, answer_idx):
         if self.current_player is None:
             return
-        real_answer_idx = self.correct_mapping[answer_idx]
+        real_idx = self.correct_mapping[answer_idx]
         correct = self.questions[self.current_q_index]["correct"]
-        if real_answer_idx == correct:
-            # Award points
+        if real_idx == correct:
             if self.wrong_players:
                 self.scores[self.current_player] +=50
             else:
@@ -325,10 +324,9 @@ class GamePage(QWidget):
             self.player_labels[self.current_player].setText(f"P{self.current_player+1}: {self.scores[self.current_player]}")
             self.next_question()
         else:
-            # Wrong
-            self.active_players[self.current_player]=False
-            self.player_labels[self.current_player].setStyleSheet(f"background-color:{self.grey}; color:white; font-size:20px; padding:14px; border-radius:6px;")
+            self.active_players[self.current_player] = False
             self.wrong_players.add(self.current_player)
+            self.player_labels[self.current_player].setStyleSheet(f"background-color:{self.grey}; color:white; font-size:20px; padding:14px; border-radius:6px;")
             self.current_player = None
 
     def manual_pick(self, idx):
@@ -338,23 +336,29 @@ class GamePage(QWidget):
 
     def game_over(self):
         max_score = max(self.scores)
-        winners = [i for i,s in enumerate(self.scores) if s==max_score]
+        winners = [i for i,s in enumerate(self.scores) if s == max_score]
         self.final_winner_indices = winners
         self.display_final_winner()
 
     def display_final_winner(self):
-        # Overlay: transparent in middle
         if self.overlay:
             self.overlay.hide()
+        if self.winner_label:
+            self.winner_label.hide()
+
         self.overlay = QLabel("GAME OVER", self)
         self.overlay.setAlignment(Qt.AlignCenter)
-        self.overlay.setStyleSheet(
-            "font-size:64px; font-weight:bold; color:white; background-color: rgba(0,0,0,0);"
-        )
-        self.overlay.setGeometry(0, 200, self.width(), 200)
+        self.overlay.setStyleSheet("font-size:64px; font-weight:bold; color:black; background-color: rgba(0,0,0,0);")
+        self.overlay.setGeometry(0,180,self.width(),200)
         self.overlay.show()
 
-        # Start blinking winner(s)
+        winner_names = ", ".join([f"P{i+1}" for i in self.final_winner_indices])
+        self.winner_label = QLabel(f"{winner_names} is the Winner!", self)
+        self.winner_label.setAlignment(Qt.AlignCenter)
+        self.winner_label.setStyleSheet("font-size:40px; font-weight:bold; color:black; background-color: rgba(0,0,0,0);")
+        self.winner_label.setGeometry(0,350,self.width(),100)
+        self.winner_label.show()
+
         self.blink_timer = QTimer()
         self.blink_timer.timeout.connect(self.blink_winners)
         self.blink_timer.start(500)
@@ -369,7 +373,7 @@ class GamePage(QWidget):
     def back_to_menu(self):
         self.stacked.setCurrentIndex(0)
 
-# ---------- Main Application ----------
+# ---------- Main ----------
 if __name__=="__main__":
     app = QApplication(sys.argv)
     stacked = QStackedWidget()
