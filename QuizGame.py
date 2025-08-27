@@ -255,22 +255,34 @@ class GamePage(QWidget):
         self.next_question()
 
     def next_question(self):
-        self.current_q_index +=1
+        self.current_q_index += 1
         if self.current_q_index >= len(self.questions):
             self.game_over()
             return
-        self.q_label.setText(self.questions[self.current_q_index]["question"])
+
+        # Reset players for the new question
+        self.active_players = [True] * self.num_players
         self.wrong_players.clear()
         self.current_player = None
 
+        # Reset player label colors
+        for i, lbl in enumerate(self.player_labels):
+            lbl.setStyleSheet(f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
+
+        # Set question text
         qdata = self.questions[self.current_q_index]
-        nonblank = [(i,a) for i,a in enumerate(qdata["answers"]) if a.strip() != ""]
-        if len(nonblank)==0:
-            self.q_label.setText("Host: No answers defined. Click a player to answer!")
+        self.q_label.setText(qdata["question"])
+
+        # Handle answers
+        nonblank = [(i, a) for i, a in enumerate(qdata["answers"]) if a.strip() != ""]
+        if len(nonblank) == 0:
+            # Manual winner mode
+            self.q_label.setText(qdata["question"] + "\n\nChoose the Winner!")
             self.manual_winner_mode = True
             for b in self.answer_buttons:
                 b.hide()
         else:
+            # Normal question mode
             self.manual_winner_mode = False
             for idx, btn in enumerate(self.answer_buttons):
                 if idx < len(nonblank):
@@ -279,20 +291,7 @@ class GamePage(QWidget):
                     btn.show()
                 else:
                     btn.hide()
-            self.correct_mapping = {i:nonblank[i][0] for i in range(len(nonblank))}
-
-        # Reset player colors
-        for i,lbl in enumerate(self.player_labels):
-            color = self.dark_colors[i] if self.active_players[i] else self.grey
-            lbl.setStyleSheet(f"background-color:{color}; color:white; font-size:20px; padding:14px; border-radius:6px;")
-
-        # Hide overlay if exists
-        if self.overlay:
-            self.overlay.hide()
-        if self.winner_label:
-            self.winner_label.hide()
-        if self.blink_timer:
-            self.blink_timer.stop()
+            self.correct_mapping = {i: nonblank[i][0] for i in range(len(nonblank))}
 
     def poll_buzzers(self):
         if self.manual_winner_mode or not self.client:
@@ -318,9 +317,9 @@ class GamePage(QWidget):
         correct = self.questions[self.current_q_index]["correct"]
         if real_idx == correct:
             if self.wrong_players:
-                self.scores[self.current_player] +=50
+                self.scores[self.current_player] += 50
             else:
-                self.scores[self.current_player] +=100
+                self.scores[self.current_player] += 100
             self.player_labels[self.current_player].setText(f"P{self.current_player+1}: {self.scores[self.current_player]}")
             self.next_question()
         else:
@@ -338,7 +337,7 @@ class GamePage(QWidget):
 
     def game_over(self):
         max_score = max(self.scores)
-        winners = [i for i,s in enumerate(self.scores) if s==max_score]
+        winners = [i for i, s in enumerate(self.scores) if s == max_score]
         self.final_winner_indices = winners
         self.display_final_winner()
 
@@ -351,14 +350,14 @@ class GamePage(QWidget):
         self.overlay = QLabel("GAME OVER", self)
         self.overlay.setAlignment(Qt.AlignCenter)
         self.overlay.setStyleSheet("font-size:64px; font-weight:bold; color:black; background-color: rgba(0,0,0,0);")
-        self.overlay.setGeometry(0,180,self.width(),200)
+        self.overlay.setGeometry(0, 180, self.width(), 200)
         self.overlay.show()
 
         winner_names = ", ".join([f"P{i+1}" for i in self.final_winner_indices])
         self.winner_label = QLabel(f"{winner_names} is the Winner!", self)
         self.winner_label.setAlignment(Qt.AlignCenter)
         self.winner_label.setStyleSheet("font-size:40px; font-weight:bold; color:black; background-color: rgba(0,0,0,0);")
-        self.winner_label.setGeometry(0,350,self.width(),100)
+        self.winner_label.setGeometry(0, 350, self.width(), 100)
         self.winner_label.show()
 
         self.blink_timer = QTimer()
@@ -376,7 +375,7 @@ class GamePage(QWidget):
         self.stacked.setCurrentIndex(0)
 
 # ---------- Main ----------
-if __name__=="__main__":
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     stacked = QStackedWidget()
 
@@ -388,7 +387,7 @@ if __name__=="__main__":
     stacked.addWidget(editor)
     stacked.addWidget(game)
 
-    stacked.setFixedSize(1000,700)
+    stacked.setFixedSize(1000, 700)
     stacked.show()
 
     sys.exit(app.exec())
