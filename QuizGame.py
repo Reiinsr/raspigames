@@ -242,6 +242,7 @@ class GamePage(QWidget):
         self.blink_state = False
         self.final_winner_indices = []
 
+    # --- Game methods ---
     def prepare_game(self):
         self.questions_all = load_questions()
         self.questions = [q for q in self.questions_all if q.get("enabled", False)]
@@ -262,11 +263,10 @@ class GamePage(QWidget):
         self.wrong_players.clear()
         self.current_player = None
 
-        # Setup answers, skip blanks
         qdata = self.questions[self.current_q_index]
         nonblank = [(i,a) for i,a in enumerate(qdata["answers"]) if a.strip() != ""]
         if len(nonblank)==0:
-            self.q_label.setText("Host: No answers defined. Click a winner above!")
+            self.q_label.setText("Host: No answers defined. Click a player to answer!")
             self.manual_winner_mode = True
             for b in self.answer_buttons:
                 b.hide()
@@ -331,12 +331,14 @@ class GamePage(QWidget):
 
     def manual_pick(self, idx):
         if self.manual_winner_mode:
-            self.final_winner_indices = [idx]
-            self.display_final_winner()
+            # Only counts for this question, does not end game
+            self.scores[idx] += 100
+            self.player_labels[idx].setText(f"P{idx+1}: {self.scores[idx]}")
+            self.next_question()
 
     def game_over(self):
         max_score = max(self.scores)
-        winners = [i for i,s in enumerate(self.scores) if s == max_score]
+        winners = [i for i,s in enumerate(self.scores) if s==max_score]
         self.final_winner_indices = winners
         self.display_final_winner()
 
