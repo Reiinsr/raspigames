@@ -1,7 +1,6 @@
 # QuizGameApp.py
 import sys
 import json
-import time
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton, QLabel,
     QLineEdit, QRadioButton, QButtonGroup, QMessageBox,
@@ -12,12 +11,11 @@ from pymodbus.client.sync import ModbusSerialClient as ModbusClient
 
 QUESTIONS_FILE = "questions.json"
 
-# ---------------- Helpers: load/save questions ----------------
+# ---------- Helpers: load/save questions ----------
 def load_questions():
     try:
         with open(QUESTIONS_FILE, "r") as f:
             data = json.load(f)
-            # ensure shape (13 questions)
             if not isinstance(data, list) or len(data) < 13:
                 raise ValueError
             return data
@@ -38,7 +36,7 @@ def save_questions(qs):
     with open(QUESTIONS_FILE, "w") as f:
         json.dump(qs, f, indent=4)
 
-# ----------------- Main Menu -----------------
+# ---------- Main Menu ----------
 class MainMenu(QWidget):
     def __init__(self, stacked):
         super().__init__()
@@ -70,16 +68,16 @@ class MainMenu(QWidget):
         self.stacked.setCurrentIndex(1)
 
     def go_game(self):
-        self.stacked.widget(2).prepare_game()  # ensure questions loaded
+        self.stacked.widget(2).prepare_game()
         self.stacked.setCurrentIndex(2)
 
-# ----------------- Question Editor -----------------
+# ---------- Question Editor ----------
 class QuestionEditor(QWidget):
     def __init__(self, stacked):
         super().__init__()
         self.stacked = stacked
         self.questions = load_questions()
-        self.widgets = []  # list of tuples: (checkbox, qline, [(radio, aline), ...])
+        self.widgets = []
 
         layout = QVBoxLayout()
         layout.setContentsMargins(10,10,10,10)
@@ -98,10 +96,10 @@ class QuestionEditor(QWidget):
             chk.setChecked(q.get("enabled", False))
             top.addWidget(chk)
 
+            top.addWidget(QLabel(f"Q{i+1}:"))
             qline = QLineEdit(q.get("question", ""))
             qline.setPlaceholderText("Type question here")
             qline.setStyleSheet("font-size:16px;")
-            top.addWidget(QLabel(f"Q{i+1}:"))
             top.addWidget(qline)
             block.addLayout(top)
 
@@ -142,12 +140,11 @@ class QuestionEditor(QWidget):
         self.setLayout(layout)
 
     def save(self):
-        qs = load_questions()  # start from file then update
+        qs = load_questions()
         for i, (chk, qline, ans_widgets) in enumerate(self.widgets):
             qs[i]["enabled"] = bool(chk.isChecked())
             qs[i]["question"] = qline.text()
             qs[i]["answers"] = [aline.text() for _, aline in ans_widgets]
-            # get correct radio
             for j, (r, _) in enumerate(ans_widgets):
                 if r.isChecked():
                     qs[i]["correct"] = j
@@ -158,32 +155,32 @@ class QuestionEditor(QWidget):
     def back(self):
         self.stacked.setCurrentIndex(0)
 
-# ----------------- Game Page -----------------
+# ---------- Game Page ----------
 class GamePage(QWidget):
     def __init__(self, stacked):
         super().__init__()
         self.stacked = stacked
-        self.questions_all = []  # full list from file
-        self.questions = []      # filtered enabled questions for this run
+        self.questions_all = []
+        self.questions = []
         self.current_q_index = -1
 
-        # Player state
+        # Players & state
         self.num_players = 4
         self.scores = [0]*self.num_players
-        self.active_players = [True]*self.num_players  # not greyed out for current question
+        self.active_players = [True]*self.num_players
         self.wrong_players = set()
-        self.current_player = None  # index of the player who buzzed and must answer
+        self.current_player = None
 
         # Colors
         self.dark_colors = ["#660000", "#006600", "#000066", "#666600"]  # dark
         self.light_colors = ["#FF6666", "#66FF66", "#6666FF", "#FFFF66"]  # light
         self.grey = "#888888"
 
-        # UI
+        # UI layout
         main = QVBoxLayout()
         main.setContentsMargins(12,12,12,12)
 
-        # Player panels (showing score)
+        # Player panels with scores
         self.player_labels = []
         ph = QHBoxLayout()
         for i in range(self.num_players):
@@ -213,7 +210,7 @@ class GamePage(QWidget):
             main.addWidget(b)
             self.answer_buttons.append(b)
 
-        # Control buttons (Back to menu)
+        # Controls
         ctrl = QHBoxLayout()
         back = QPushButton("Back to Menu")
         back.setStyleSheet("font-size:16px;")
@@ -223,80 +220,78 @@ class GamePage(QWidget):
 
         self.setLayout(main)
 
-        # Modbus client (sync)
+        # Modbus client
         self.client = ModbusClient(method="rtu", port="/dev/ttyUSB0",
                                    baudrate=9600, parity='N', stopbits=1,
                                    bytesize=8, timeout=0.5)
         try:
             self.client.connect()
-        except Exception as e:
-            QMessageBox.critical(self, "Modbus Error", f"Could not connect to Modbus: {e}")
+        except Exception:
+            QMessageBox.critical(self, "Modbus Error", "Could not connect to Modbus/PLC. Make sure /dev/ttyUSB0 is correct.")
 
-        # Timer to poll inputs (non-blocking)
+        # Poll timer
         self.poll_timer = QTimer()
         self.poll_timer.timeout.connect(self.poll_buzzers)
-        self.poll_timer.start(120)  # poll every 120 ms
+        self.poll_timer.start(120)
+
+        # Winner overlay + blink timer placeholders
+        self.overlay = None
+        self.blink_timer = None
+        self.blink_state = False
+        self.final_winner_indices = []
 
     def prepare_game(self):
-        # load questions and filter enabled ones
         self.questions_all = load_questions()
         self.questions = [q for q in self.questions_all if q.get("enabled", False)]
         if not self.questions:
             QMessageBox.warning(self, "No Questions", "No questions are enabled. Enable some in Edit Questions.")
-            # still set label
             self.q_label.setText("No enabled questions. Edit questions to enable some.")
         self.current_q_index = -1
         self.scores = [0]*self.num_players
         self.active_players = [True]*self.num_players
         self.wrong_players.clear()
         self.current_player = None
-        # refresh player panels
         for i, lbl in enumerate(self.player_labels):
             lbl.setText(f"P{i+1}: {self.scores[i]}")
             lbl.setStyleSheet(f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
         self.q_label.setText("Press any buzzer to start")
 
     def back_to_menu(self):
-        # stop any active question and go back
         self.current_player = None
         self.disable_answer_buttons()
+        # stop blink timers if any
+        self.stop_blinking()
+        self.hide_overlay()
         self.stacked.setCurrentIndex(0)
 
     def poll_buzzers(self):
-        # if there's a current player answering, do not detect new buzzes
         if self.current_player is not None:
             return
-        # read 4 discrete inputs starting at address 10 (this matches your PLC mapping)
         try:
             rr = self.client.read_discrete_inputs(10, 4, unit=1)
         except Exception:
             return
-        if rr is None or hasattr(rr, "isError") and rr.isError():
+        if rr is None or (hasattr(rr, "isError") and rr.isError()):
             return
         bits = getattr(rr, "bits", None)
         if not bits:
             return
-        # detect first pressed input where player is still active
         for i, pressed in enumerate(bits):
             if pressed and self.active_players[i]:
-                # set current player
                 self.current_player = i
-                # highlight player lighter
+                # highlight player
                 self.player_labels[i].setStyleSheet(
                     f"background-color:{self.light_colors[i]}; color:black; font-size:20px; padding:14px; border-radius:6px;")
-                # enable answers for this player
                 for b in self.answer_buttons:
                     b.setEnabled(True)
-                # if this is the first press in the round, load next question (advance)
-                if self.current_q_index == -1 or all(btn.isEnabled() == False for btn in self.answer_buttons):
-                    # if no active question, ask next
+                # if no question loaded yet, load next
+                if self.current_q_index == -1 or all(not btn.isEnabled() for btn in self.answer_buttons):
                     self.next_question()
                 break
 
     def next_question(self):
-        # move to next question in filtered list
         self.current_q_index += 1
-        # skip questions with empty text if any
+        # skip empty questions
         while self.current_q_index < len(self.questions) and not self.questions[self.current_q_index].get("question"):
             self.current_q_index += 1
         if self.current_q_index >= len(self.questions):
@@ -313,44 +308,38 @@ class GamePage(QWidget):
             b.setEnabled(False)
 
     def player_answer(self, answer_idx):
-        # current_player answered by clicking answer_idx
         if self.current_player is None:
             return
         q = self.questions[self.current_q_index]
         correct = q.get("correct", 0)
         player = self.current_player
         if answer_idx == correct:
-            # correct answer
+            # correct
             if len(self.wrong_players) == 0:
                 self.scores[player] += 100
             else:
                 self.scores[player] += 50
-            # update display
             self.player_labels[player].setText(f"P{player+1}: {self.scores[player]}")
-            # clear states and go to next question
+            # reset visuals and go to next
             self.reset_round_visuals()
             self.current_player = None
             self.disable_answer_buttons()
-            # next question will be asked on next buzz; optionally auto-advance:
-            # auto-advance immediate:
+            # auto-advance to next question immediately
             self.next_question()
         else:
-            # wrong answer -> grey out player for this question
+            # wrong answer
             self.wrong_players.add(player)
             self.active_players[player] = False
             self.player_labels[player].setStyleSheet(
                 f"background-color:{self.grey}; color:black; font-size:20px; padding:14px; border-radius:6px;")
-            # disable answering for this player now; allow others (clear current_player so others can buzz)
             self.current_player = None
             self.disable_answer_buttons()
-            # if all players wrong, reveal correct and move on
             if all(not ap for ap in self.active_players):
                 QMessageBox.information(self, "No one left", "All players missed this question. Moving to next.")
                 self.reset_round_visuals()
                 self.next_question()
 
     def reset_round_visuals(self):
-        # reset player visuals but keep scores; re-enable all active_players for next round
         self.active_players = [True]*self.num_players
         self.wrong_players.clear()
         for i in range(self.num_players):
@@ -360,29 +349,125 @@ class GamePage(QWidget):
         self.disable_answer_buttons()
 
     def end_game(self):
-        # pick winner by highest score (tie: first max index)
+        # determine winner(s)
         if not any(q.get("enabled", False) for q in load_questions()):
             QMessageBox.information(self, "Game Over", "No enabled questions were found.")
-            self.back_to_menu()
+            self.prepare_game()
+            self.stacked.setCurrentIndex(0)
             return
-        if sum(self.scores) == 0:
-            # nobody scored
+
+        if all(score == 0 for score in self.scores):
             QMessageBox.information(self, "Game Over", "Game finished. No points scored.")
-        else:
-            max_score = max(self.scores)
-            winners = [i for i, s in enumerate(self.scores) if s == max_score]
-            if len(winners) == 1:
-                w = winners[0]
-                QMessageBox.information(self, "Game Over", f"🎉 Player {w+1} wins with {max_score} points!")
+            self.prepare_game()
+            self.stacked.setCurrentIndex(0)
+            return
+
+        max_score = max(self.scores)
+        winners = [i for i, s in enumerate(self.scores) if s == max_score]
+        self.final_winner_indices = winners  # could be multiple
+
+        # Show blinking + huge GAME OVER overlay
+        self.show_winner_effect()
+
+    def show_winner_effect(self):
+        # stop polling new buzzes
+        self.poll_timer_stop()
+        # overlay
+        if self.overlay is None:
+            self.overlay = QWidget(self)
+            self.overlay.setAttribute(Qt.WA_StyledBackground, True)
+            self.overlay.setStyleSheet("background-color: rgba(0,0,0,160);")
+            self.overlay.setGeometry(0, 0, self.width(), self.height())
+
+            v = QVBoxLayout(self.overlay)
+            v.setAlignment(Qt.AlignCenter)
+
+            self.game_over_label = QLabel("GAME OVER")
+            self.game_over_label.setAlignment(Qt.AlignCenter)
+            self.game_over_label.setStyleSheet("font-size:72px; font-weight:bold; color: white;")
+            v.addWidget(self.game_over_label)
+
+            # show winner text (if tie, show multiple)
+            if len(self.final_winner_indices) == 1:
+                w = self.final_winner_indices[0]
+                winner_text = f"Winner: Player {w+1}\nScore: {self.scores[w]}"
             else:
-                # tie - list winners
-                names = ", ".join(f"P{i+1}" for i in winners)
-                QMessageBox.information(self, "Game Over", f"Tie! Winners: {names} with {max_score} points each.")
-        # reset game state and go to menu
+                names = ", ".join(f"P{i+1}" for i in self.final_winner_indices)
+                winner_text = f"Tie between: {names}\nScore: {self.scores[self.final_winner_indices[0]]}"
+            self.winner_label = QLabel(winner_text)
+            self.winner_label.setAlignment(Qt.AlignCenter)
+            self.winner_label.setStyleSheet("font-size:28px; color: white;")
+            v.addWidget(self.winner_label)
+
+            # Return button
+            btn = QPushButton("Return to Menu")
+            btn.setStyleSheet("font-size:20px; padding:12px;")
+            btn.clicked.connect(self.return_to_menu_from_overlay)
+            v.addWidget(btn)
+
+        self.overlay.show()
+        # start blinking winner labels
+        self.blink_state = False
+        self.blink_timer = QTimer(self)
+        self.blink_timer.timeout.connect(self.blink_winner_labels)
+        self.blink_timer.start(500)  # toggle every 500ms
+
+    def blink_winner_labels(self):
+        # toggle colors for winners
+        self.blink_state = not self.blink_state
+        for i in range(self.num_players):
+            if i in self.final_winner_indices:
+                if self.blink_state:
+                    # lighter color
+                    self.player_labels[i].setStyleSheet(
+                        f"background-color:{self.light_colors[i]}; color:black; font-size:20px; padding:14px; border-radius:6px;")
+                else:
+                    # dark color
+                    self.player_labels[i].setStyleSheet(
+                        f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
+            else:
+                # ensure others stay dark (not blinking)
+                self.player_labels[i].setStyleSheet(
+                    f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
+
+    def poll_timer_stop(self):
+        if self.poll_timer.isActive():
+            self.poll_timer.stop()
+
+    def poll_timer_start(self):
+        if not self.poll_timer.isActive():
+            self.poll_timer.start(120)
+
+    def stop_blinking(self):
+        if self.blink_timer:
+            self.blink_timer.stop()
+            self.blink_timer = None
+
+    def hide_overlay(self):
+        if self.overlay:
+            self.overlay.hide()
+
+    def return_to_menu_from_overlay(self):
+        # stop blinking and hide overlay, reset and go to menu
+        self.stop_blinking()
+        self.hide_overlay()
         self.prepare_game()
         self.stacked.setCurrentIndex(0)
+        # restart polling
+        self.poll_timer_start()
 
-# ----------------- Application start -----------------
+    def keyPressEvent(self, event):
+        # allow Enter to reset or to return when overlay visible
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if self.overlay and self.overlay.isVisible():
+                self.return_to_menu_from_overlay()
+            else:
+                # reset current question round if needed
+                self.current_player = None
+                self.disable_answer_buttons()
+                self.reset_round_visuals()
+
+# ---------- Application entry ----------
 def main():
     app = QApplication(sys.argv)
     stacked = QStackedWidget()
@@ -391,9 +476,9 @@ def main():
     editor = QuestionEditor(stacked)
     game = GamePage(stacked)
 
-    stacked.addWidget(main_menu)  # index 0
-    stacked.addWidget(editor)     # index 1
-    stacked.addWidget(game)       # index 2
+    stacked.addWidget(main_menu)  # 0
+    stacked.addWidget(editor)     # 1
+    stacked.addWidget(game)       # 2
 
     stacked.setFixedSize(1000, 700)
     stacked.setWindowTitle("QuizGame App")
