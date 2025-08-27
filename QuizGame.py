@@ -1,4 +1,3 @@
-# QuizGameApp.py
 import sys
 import json
 from PySide6.QtWidgets import (
@@ -248,7 +247,7 @@ class GamePage(QWidget):
         self.current_q_index = -1
         self.scores = [0]*self.num_players
         self.active_players = [True]*self.num_players
-        self.wrong_players = set()
+        self.wrong_players.clear()
         self.current_player = None
         self.manual_winner_mode = False
         self.next_question()
@@ -285,6 +284,13 @@ class GamePage(QWidget):
         for i,lbl in enumerate(self.player_labels):
             lbl.setStyleSheet(f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
             lbl.setEnabled(True)
+
+        # Hide GAME OVER overlay if exists
+        if self.overlay:
+            self.overlay.hide()
+            self.overlay = None
+        if self.blink_timer:
+            self.blink_timer.stop()
 
     def poll_buzzers(self):
         if self.manual_winner_mode:
@@ -337,14 +343,16 @@ class GamePage(QWidget):
         self.display_final_winner()
 
     def display_final_winner(self):
-        # Overlay
-        if self.overlay is None:
-            self.overlay = QLabel(self)
-            self.overlay.setAlignment(Qt.AlignCenter)
-            self.overlay.setStyleSheet("font-size:64px; font-weight:bold; color:white; background-color:black;")
-            self.overlay.setText("GAME OVER")
-            self.overlay.setGeometry(0,0,self.width(),self.height())
-            self.overlay.show()
+        # Overlay: transparent in middle
+        if self.overlay:
+            self.overlay.hide()
+        self.overlay = QLabel("GAME OVER", self)
+        self.overlay.setAlignment(Qt.AlignCenter)
+        self.overlay.setStyleSheet(
+            "font-size:64px; font-weight:bold; color:white; background-color: rgba(0,0,0,0);"
+        )
+        self.overlay.setGeometry(0, 200, self.width(), 200)
+        self.overlay.show()
 
         # Start blinking winner(s)
         self.blink_timer = QTimer()
@@ -374,7 +382,7 @@ if __name__=="__main__":
     stacked.addWidget(editor)
     stacked.addWidget(game)
 
-    stacked.setFixedSize(800,600)
+    stacked.setFixedSize(1000,700)
     stacked.show()
 
     sys.exit(app.exec())
