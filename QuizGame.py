@@ -170,6 +170,7 @@ class GamePage(QWidget):
         self.active_players = [True]*self.num_players
         self.wrong_players = set()
         self.current_player = None
+        self.manual_winner_mode = False
 
         # Colors
         self.dark_colors = ["#660000", "#006600", "#000066", "#666600"]  # dark
@@ -187,6 +188,7 @@ class GamePage(QWidget):
             lbl = QLabel(f"P{i+1}: 0")
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setStyleSheet(f"background-color:{self.dark_colors[i]}; color: white; font-size:20px; padding:14px; border-radius:6px;")
+            lbl.mousePressEvent = lambda event, idx=i: self.manual_pick(idx)
             ph.addWidget(lbl)
             self.player_labels.append(lbl)
         main.addLayout(ph)
@@ -200,7 +202,7 @@ class GamePage(QWidget):
         main.addWidget(self.q_label)
         main.addSpacing(8)
 
-        # Answer buttons
+        # Answer buttons (up to 4, will hide unused)
         self.answer_buttons = []
         for i in range(4):
             b = QPushButton(f"Answer {i+1}")
@@ -243,232 +245,124 @@ class GamePage(QWidget):
     def prepare_game(self):
         self.questions_all = load_questions()
         self.questions = [q for q in self.questions_all if q.get("enabled", False)]
-        if not self.questions:
-            QMessageBox.warning(self, "No Questions", "No questions are enabled. Enable some in Edit Questions.")
-            self.q_label.setText("No enabled questions. Edit questions to enable some.")
         self.current_q_index = -1
         self.scores = [0]*self.num_players
         self.active_players = [True]*self.num_players
-        self.wrong_players.clear()
+        self.wrong_players = set()
         self.current_player = None
-        for i, lbl in enumerate(self.player_labels):
-            lbl.setText(f"P{i+1}: {self.scores[i]}")
-            lbl.setStyleSheet(f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
-        self.q_label.setText("Press any buzzer to start")
-
-    def back_to_menu(self):
-        self.current_player = None
-        self.disable_answer_buttons()
-        # stop blink timers if any
-        self.stop_blinking()
-        self.hide_overlay()
-        self.stacked.setCurrentIndex(0)
-
-    def poll_buzzers(self):
-        if self.current_player is not None:
-            return
-        try:
-            rr = self.client.read_discrete_inputs(10, 4, unit=1)
-        except Exception:
-            return
-        if rr is None or (hasattr(rr, "isError") and rr.isError()):
-            return
-        bits = getattr(rr, "bits", None)
-        if not bits:
-            return
-        for i, pressed in enumerate(bits):
-            if pressed and self.active_players[i]:
-                self.current_player = i
-                # highlight player
-                self.player_labels[i].setStyleSheet(
-                    f"background-color:{self.light_colors[i]}; color:black; font-size:20px; padding:14px; border-radius:6px;")
-                for b in self.answer_buttons:
-                    b.setEnabled(True)
-                # if no question loaded yet, load next
-                if self.current_q_index == -1 or all(not btn.isEnabled() for btn in self.answer_buttons):
-                    self.next_question()
-                break
+        self.manual_winner_mode = False
+        self.next_question()
 
     def next_question(self):
-        self.current_q_index += 1
-        # skip empty questions
-        while self.current_q_index < len(self.questions) and not self.questions[self.current_q_index].get("question"):
-            self.current_q_index += 1
+        self.current_q_index +=1
         if self.current_q_index >= len(self.questions):
-            self.end_game()
+            self.game_over()
             return
-        q = self.questions[self.current_q_index]
-        self.q_label.setText(q.get("question", ""))
-        for i, b in enumerate(self.answer_buttons):
-            b.setText(q.get("answers", ["","","",""])[i])
-            b.setEnabled(True)
+        self.q_label.setText(self.questions[self.current_q_index]["question"])
+        self.wrong_players.clear()
+        self.current_player = None
 
-    def disable_answer_buttons(self):
-        for b in self.answer_buttons:
-            b.setEnabled(False)
+        # Setup answers, skip blanks
+        qdata = self.questions[self.current_q_index]
+        nonblank = [(i,a) for i,a in enumerate(qdata["answers"]) if a.strip() != ""]
+        if len(nonblank)==0:
+            self.q_label.setText("Host: No answers defined. Click a winner above!")
+            self.manual_winner_mode = True
+            for b in self.answer_buttons:
+                b.hide()
+        else:
+            self.manual_winner_mode = False
+            for idx, btn in enumerate(self.answer_buttons):
+                if idx < len(nonblank):
+                    btn.setText(nonblank[idx][1])
+                    btn.setEnabled(True)
+                    btn.show()
+                else:
+                    btn.hide()
+            self.correct_mapping = {i:nonblank[i][0] for i in range(len(nonblank))}
+
+        # Reset player colors
+        for i,lbl in enumerate(self.player_labels):
+            lbl.setStyleSheet(f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
+            lbl.setEnabled(True)
+
+    def poll_buzzers(self):
+        if self.manual_winner_mode:
+            return
+        if not self.client:
+            return
+        try:
+            rr = self.client.read_discrete_inputs(10, 4, unit=1)  # X0-X3
+            if rr.isError():
+                return
+            for i, pressed in enumerate(rr.bits):
+                if pressed and self.current_player is None and self.active_players[i]:
+                    self.current_player = i
+                    self.highlight_player(i)
+        except Exception:
+            pass
+
+    def highlight_player(self, idx):
+        self.player_labels[idx].setStyleSheet(f"background-color:{self.light_colors[idx]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
 
     def player_answer(self, answer_idx):
         if self.current_player is None:
             return
-        q = self.questions[self.current_q_index]
-        correct = q.get("correct", 0)
-        player = self.current_player
-        if answer_idx == correct:
-            # correct
-            if len(self.wrong_players) == 0:
-                self.scores[player] += 100
+        real_answer_idx = self.correct_mapping[answer_idx]
+        correct = self.questions[self.current_q_index]["correct"]
+        if real_answer_idx == correct:
+            # Award points
+            if self.wrong_players:
+                self.scores[self.current_player] +=50
             else:
-                self.scores[player] += 50
-            self.player_labels[player].setText(f"P{player+1}: {self.scores[player]}")
-            # reset visuals and go to next
-            self.reset_round_visuals()
-            self.current_player = None
-            self.disable_answer_buttons()
-            # auto-advance to next question immediately
+                self.scores[self.current_player] +=100
+            self.player_labels[self.current_player].setText(f"P{self.current_player+1}: {self.scores[self.current_player]}")
             self.next_question()
         else:
-            # wrong answer
-            self.wrong_players.add(player)
-            self.active_players[player] = False
-            self.player_labels[player].setStyleSheet(
-                f"background-color:{self.grey}; color:black; font-size:20px; padding:14px; border-radius:6px;")
+            # Wrong
+            self.active_players[self.current_player]=False
+            self.player_labels[self.current_player].setStyleSheet(f"background-color:{self.grey}; color:white; font-size:20px; padding:14px; border-radius:6px;")
+            self.wrong_players.add(self.current_player)
             self.current_player = None
-            self.disable_answer_buttons()
-            if all(not ap for ap in self.active_players):
-                QMessageBox.information(self, "No one left", "All players missed this question. Moving to next.")
-                self.reset_round_visuals()
-                self.next_question()
 
-    def reset_round_visuals(self):
-        self.active_players = [True]*self.num_players
-        self.wrong_players.clear()
-        for i in range(self.num_players):
-            self.player_labels[i].setStyleSheet(
-                f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
-            self.player_labels[i].setText(f"P{i+1}: {self.scores[i]}")
-        self.disable_answer_buttons()
+    def manual_pick(self, idx):
+        if self.manual_winner_mode:
+            self.final_winner_indices = [idx]
+            self.display_final_winner()
 
-    def end_game(self):
-        # determine winner(s)
-        if not any(q.get("enabled", False) for q in load_questions()):
-            QMessageBox.information(self, "Game Over", "No enabled questions were found.")
-            self.prepare_game()
-            self.stacked.setCurrentIndex(0)
-            return
-
-        if all(score == 0 for score in self.scores):
-            QMessageBox.information(self, "Game Over", "Game finished. No points scored.")
-            self.prepare_game()
-            self.stacked.setCurrentIndex(0)
-            return
-
+    def game_over(self):
         max_score = max(self.scores)
-        winners = [i for i, s in enumerate(self.scores) if s == max_score]
-        self.final_winner_indices = winners  # could be multiple
+        winners = [i for i,s in enumerate(self.scores) if s==max_score]
+        self.final_winner_indices = winners
+        self.display_final_winner()
 
-        # Show blinking + huge GAME OVER overlay
-        self.show_winner_effect()
-
-    def show_winner_effect(self):
-        # stop polling new buzzes
-        self.poll_timer_stop()
-        # overlay
+    def display_final_winner(self):
+        # Overlay
         if self.overlay is None:
-            self.overlay = QWidget(self)
-            self.overlay.setAttribute(Qt.WA_StyledBackground, True)
-            self.overlay.setStyleSheet("background-color: rgba(0,0,0,160);")
-            self.overlay.setGeometry(0, 0, self.width(), self.height())
+            self.overlay = QLabel(self)
+            self.overlay.setAlignment(Qt.AlignCenter)
+            self.overlay.setStyleSheet("font-size:64px; font-weight:bold; color:white; background-color:black;")
+            self.overlay.setText("GAME OVER")
+            self.overlay.setGeometry(0,0,self.width(),self.height())
+            self.overlay.show()
 
-            v = QVBoxLayout(self.overlay)
-            v.setAlignment(Qt.AlignCenter)
+        # Start blinking winner(s)
+        self.blink_timer = QTimer()
+        self.blink_timer.timeout.connect(self.blink_winners)
+        self.blink_timer.start(500)
 
-            self.game_over_label = QLabel("GAME OVER")
-            self.game_over_label.setAlignment(Qt.AlignCenter)
-            self.game_over_label.setStyleSheet("font-size:72px; font-weight:bold; color: white;")
-            v.addWidget(self.game_over_label)
-
-            # show winner text (if tie, show multiple)
-            if len(self.final_winner_indices) == 1:
-                w = self.final_winner_indices[0]
-                winner_text = f"Winner: Player {w+1}\nScore: {self.scores[w]}"
-            else:
-                names = ", ".join(f"P{i+1}" for i in self.final_winner_indices)
-                winner_text = f"Tie between: {names}\nScore: {self.scores[self.final_winner_indices[0]]}"
-            self.winner_label = QLabel(winner_text)
-            self.winner_label.setAlignment(Qt.AlignCenter)
-            self.winner_label.setStyleSheet("font-size:28px; color: white;")
-            v.addWidget(self.winner_label)
-
-            # Return button
-            btn = QPushButton("Return to Menu")
-            btn.setStyleSheet("font-size:20px; padding:12px;")
-            btn.clicked.connect(self.return_to_menu_from_overlay)
-            v.addWidget(btn)
-
-        self.overlay.show()
-        # start blinking winner labels
-        self.blink_state = False
-        self.blink_timer = QTimer(self)
-        self.blink_timer.timeout.connect(self.blink_winner_labels)
-        self.blink_timer.start(500)  # toggle every 500ms
-
-    def blink_winner_labels(self):
-        # toggle colors for winners
+    def blink_winners(self):
         self.blink_state = not self.blink_state
         for i in range(self.num_players):
             if i in self.final_winner_indices:
-                if self.blink_state:
-                    # lighter color
-                    self.player_labels[i].setStyleSheet(
-                        f"background-color:{self.light_colors[i]}; color:black; font-size:20px; padding:14px; border-radius:6px;")
-                else:
-                    # dark color
-                    self.player_labels[i].setStyleSheet(
-                        f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
-            else:
-                # ensure others stay dark (not blinking)
-                self.player_labels[i].setStyleSheet(
-                    f"background-color:{self.dark_colors[i]}; color:white; font-size:20px; padding:14px; border-radius:6px;")
+                color = self.light_colors[i] if self.blink_state else self.dark_colors[i]
+                self.player_labels[i].setStyleSheet(f"background-color:{color}; color:white; font-size:20px; padding:14px; border-radius:6px;")
 
-    def poll_timer_stop(self):
-        if self.poll_timer.isActive():
-            self.poll_timer.stop()
-
-    def poll_timer_start(self):
-        if not self.poll_timer.isActive():
-            self.poll_timer.start(120)
-
-    def stop_blinking(self):
-        if self.blink_timer:
-            self.blink_timer.stop()
-            self.blink_timer = None
-
-    def hide_overlay(self):
-        if self.overlay:
-            self.overlay.hide()
-
-    def return_to_menu_from_overlay(self):
-        # stop blinking and hide overlay, reset and go to menu
-        self.stop_blinking()
-        self.hide_overlay()
-        self.prepare_game()
+    def back_to_menu(self):
         self.stacked.setCurrentIndex(0)
-        # restart polling
-        self.poll_timer_start()
 
-    def keyPressEvent(self, event):
-        # allow Enter to reset or to return when overlay visible
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
-            if self.overlay and self.overlay.isVisible():
-                self.return_to_menu_from_overlay()
-            else:
-                # reset current question round if needed
-                self.current_player = None
-                self.disable_answer_buttons()
-                self.reset_round_visuals()
-
-# ---------- Application entry ----------
-def main():
+# ---------- Main Application ----------
+if __name__=="__main__":
     app = QApplication(sys.argv)
     stacked = QStackedWidget()
 
@@ -476,15 +370,11 @@ def main():
     editor = QuestionEditor(stacked)
     game = GamePage(stacked)
 
-    stacked.addWidget(main_menu)  # 0
-    stacked.addWidget(editor)     # 1
-    stacked.addWidget(game)       # 2
+    stacked.addWidget(main_menu)
+    stacked.addWidget(editor)
+    stacked.addWidget(game)
 
-    stacked.setFixedSize(1000, 700)
-    stacked.setWindowTitle("QuizGame App")
+    stacked.setFixedSize(800,600)
     stacked.show()
 
     sys.exit(app.exec())
-
-if __name__ == "__main__":
-    main()
